@@ -226,6 +226,8 @@ func (c *Checker) CheckPackage(pkg *packages.Package) Result {
 		lines:     make(map[string][]string),
 		exclude:   excludedSymbols,
 		errors:    []UncheckedError{},
+		pendingErrors: []map[string]UncheckedError{},
+		toCheckErrors: map[string]UncheckedError{},
 	}
 
 	for _, astFile := range pkg.Syntax {
@@ -248,6 +250,9 @@ type visitor struct {
 	exclude   map[string]bool
 
 	errors []UncheckedError
+	level []int
+	pendingErrors []map[string]UncheckedError
+	toCheckErrors map[string]UncheckedError
 }
 
 // selectorAndFunc tries to get the selector and function from call expression.
@@ -538,6 +543,35 @@ func (v *visitor) addErrorAtPosition(position token.Pos, call *ast.CallExpr) {
 	v.errors = append(v.errors, UncheckedError{pos, line, name, sel})
 }
 
+func (v *visitor) addPendingErrorsAtPosition(positions []token.Pos, calls []*ast.CallExpr, identNames []string) {
+	m := map[string]UncheckedError{}
+	for i := range positions{
+		position, call, identName := positions[i], calls[i], identNames[i]
+		pos := v.fset.Position(position)
+		lines, ok := v.lines[pos.Filename]
+		if !ok {
+			lines = readfile(pos.Filename)
+			v.lines[pos.Filename] = lines
+		}
+
+		line := "??"
+		if pos.Line-1 < len(lines) {
+			line = strings.TrimSpace(lines[pos.Line-1])
+		}
+
+		var name string
+		var sel string
+		if call != nil {
+			name = v.fullName(call)
+			sel = v.selectorName(call)
+		}
+		m[identName] = UncheckedError{pos, line, name, sel}
+	}
+
+	v.level = append(v.level, 0)
+	v.pendingErrors = append(v.pendingErrors, m)
+}
+
 func readfile(filename string) []string {
 	var f, err = os.Open(filename)
 	if err != nil {
@@ -553,11 +587,28 @@ func readfile(filename string) []string {
 }
 
 func (v *visitor) Visit(node ast.Node) ast.Visitor {
+	if len(v.pendingErrors) != 0 {
+		if v.level[len(v.level)-1] == 0 {
+			v.toCheckErrors = v.pendingErrors[len(v.pendingErrors)-1]
+			v.pendingErrors = v.pendingErrors[:len(v.pendingErrors)-1]
+			v.level = v.level[:len(v.level)-1]
+		}
+	}
+
 	switch stmt := node.(type) {
 	case *ast.ExprStmt:
 		if call, ok := stmt.X.(*ast.CallExpr); ok {
 			if !v.ignoreCall(call) && v.callReturnsError(call) {
 				v.addErrorAtPosition(call.Lparen, call)
+			}
+			if len(v.toCheckErrors) == 0 {
+				break
+			}
+			// only handle `Check(err)`
+			for _, arg := range call.Args {
+				if ident, ok := arg.(*ast.Ident); ok {
+					delete(v.toCheckErrors, ident.Name)
+				}
 			}
 		}
 	case *ast.GoStmt:
@@ -575,18 +626,40 @@ func (v *visitor) Visit(node ast.Node) ast.Visitor {
 				if !v.blank {
 					break
 				}
+				if len(v.toCheckErrors) > 0 {
+					// err := f()
+					// err2 := f2(err)
+					for _, arg := range call.Args {
+						if ident, ok := arg.(*ast.Ident); ok {
+							delete(v.toCheckErrors, ident.Name)
+						}
+					}
+				}
 				if v.ignoreCall(call) {
 					break
 				}
 				isError := v.errorsByArg(call)
+
+				var (
+					pendArg1 []token.Pos
+					pendArg2 []*ast.CallExpr
+					pendArg3 []string
+				)
 				for i := 0; i < len(stmt.Lhs); i++ {
 					if id, ok := stmt.Lhs[i].(*ast.Ident); ok {
 						// We shortcut calls to recover() because errorsByArg can't
 						// check its return types for errors since it returns interface{}.
 						if id.Name == "_" && (v.isRecover(call) || isError[i]) {
 							v.addErrorAtPosition(id.NamePos, call)
+						} else if id.Name != "_" && isError[i] {
+							pendArg1 = append(pendArg1, id.NamePos)
+							pendArg2 = append(pendArg2, call)
+							pendArg3 = append(pendArg3, id.Name)
 						}
 					}
+				}
+				if len(pendArg1) > 0 {
+					v.addPendingErrorsAtPosition(pendArg1, pendArg2, pendArg3)
 				}
 			} else if assert, ok := stmt.Rhs[0].(*ast.TypeAssertExpr); ok {
 				if !v.asserts {
@@ -607,6 +680,11 @@ func (v *visitor) Visit(node ast.Node) ast.Visitor {
 		} else {
 			// multiple value on rhs; in this case a call can't return
 			// multiple values. Assume len(stmt.Lhs) == len(stmt.Rhs)
+			var (
+				pendArg1 []token.Pos
+				pendArg2 []*ast.CallExpr
+				pendArg3 []string
+			)
 			for i := 0; i < len(stmt.Lhs); i++ {
 				if id, ok := stmt.Lhs[i].(*ast.Ident); ok {
 					if call, ok := stmt.Rhs[i].(*ast.CallExpr); ok {
@@ -618,6 +696,10 @@ func (v *visitor) Visit(node ast.Node) ast.Visitor {
 						}
 						if id.Name == "_" && v.callReturnsError(call) {
 							v.addErrorAtPosition(id.NamePos, call)
+						} else if v.callReturnsError(call) {
+							pendArg1 = append(pendArg1, id.NamePos)
+							pendArg2 = append(pendArg2, call)
+							pendArg3 = append(pendArg3, id.Name)
 						}
 					} else if assert, ok := stmt.Rhs[i].(*ast.TypeAssertExpr); ok {
 						if !v.asserts {
@@ -631,10 +713,67 @@ func (v *visitor) Visit(node ast.Node) ast.Visitor {
 					}
 				}
 			}
+			if len(pendArg1) > 0 {
+				v.addPendingErrorsAtPosition(pendArg1, pendArg2, pendArg3)
+			}
+		}
+	case *ast.IfStmt:
+		if len(v.toCheckErrors) == 0 {
+			break
+		}
+		switch expr := stmt.Cond.(type) {
+		case *ast.BinaryExpr:
+			// only handle `if err == x` or `if err != x`
+			if expr.Op == token.EQL || expr.Op == token.NEQ {
+				if ident, ok := expr.X.(*ast.Ident); ok {
+					delete(v.toCheckErrors, ident.Name)
+				}
+				if ident, ok := expr.Y.(*ast.Ident); ok {
+					delete(v.toCheckErrors, ident.Name)
+				}
+			}
+		case *ast.CallExpr:
+			// only handle `if errors.Is(err)`
+			for _, arg := range expr.Args {
+				if ident, ok := arg.(*ast.Ident); ok {
+					delete(v.toCheckErrors, ident.Name)
+				}
+			}
+		}
+	case *ast.SendStmt:
+		if len(v.toCheckErrors) == 0 {
+			break
+		}
+		switch expr := stmt.Value.(type) {
+		case *ast.Ident:
+			// only handle `ch <- err`
+			delete(v.toCheckErrors, expr.Name)
+		case *ast.CallExpr:
+			// only handle `ch <- NewError(err)`
+			for _, arg := range expr.Args {
+				if ident, ok := arg.(*ast.Ident); ok {
+					delete(v.toCheckErrors, ident.Name)
+				}
+			}
 		}
 	default:
 	}
+
+	for _, err := range v.toCheckErrors {
+		v.errors = append(v.errors, err)
+	}
+	v.toCheckErrors = map[string]UncheckedError{}
+
+	if len(v.pendingErrors) != 0 {
+		if node == nil {
+			v.level[len(v.level)-1]--
+		} else {
+			v.level[len(v.level)-1]++
+		}
+	}
+
 	return v
+	// add toCheckErrors for last time
 }
 
 func isErrorType(t types.Type) bool {
