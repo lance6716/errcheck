@@ -5,7 +5,7 @@ func f() error {
 }
 
 func g(h func() error) error {
-	err := h()
+	err := h() // SHOULD REPORT
 	_ = 1
 	return err
 }
@@ -22,7 +22,7 @@ func check(e error) {}
 
 func main() {
 	// error must be checked before any action!
-	err := f()
+	err := f() // SHOULD REPORT
 	a := 1
 	if err != nil {
 		panic(err)
@@ -36,9 +36,9 @@ func main() {
 		panic(err2)
 	}
 
-	err3 := g(func() error {
+	err3 := g(func() error { // SHOULD REPORT
 		// test nested func
-		err4 := f()
+		err4 := f() // SHOULD REPORT
 		_ = 1
 		return err4
 	})
@@ -65,7 +65,7 @@ func main() {
 
 	// return the second error
 	err8 := f()
-	err9 := i(err8)
+	err9 := i(err8) // SHOULD REPORT
 	_ = 1
 	if err9 != nil {
 		panic(err9)
@@ -74,5 +74,17 @@ func main() {
 	err10 := f()
 	ch <- i(err10)
 
+	if err11 := f(); err11 != nil {
+		panic(err11)
+	}
 
+	var err12 error
+	switch iii {
+	case 1:
+		err12 = f()
+	default:
+	}
+	if err12 != nil {
+		panic(err12)
+	}
 }

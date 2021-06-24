@@ -586,14 +586,34 @@ func readfile(filename string) []string {
 	return lines
 }
 
+func (v *visitor) popPending() {
+	v.toCheckErrors = v.pendingErrors[len(v.pendingErrors)-1]
+	v.pendingErrors = v.pendingErrors[:len(v.pendingErrors)-1]
+	v.level = v.level[:len(v.level)-1]
+}
+
 func (v *visitor) Visit(node ast.Node) ast.Visitor {
+	//fmt.Println(node == nil, node)
+	//fmt.Printf("%T\n", node)
+	//fmt.Println(v.level)
 	if len(v.pendingErrors) != 0 {
 		if v.level[len(v.level)-1] == 0 {
-			v.toCheckErrors = v.pendingErrors[len(v.pendingErrors)-1]
-			v.pendingErrors = v.pendingErrors[:len(v.pendingErrors)-1]
-			v.level = v.level[:len(v.level)-1]
+			if node == nil {
+				// hack for *ast.CaseClause.Body, not sure this introduce more problem
+				v.level[len(v.level)-1] = 1
+				fmt.Println("hack!!")
+			} else if _, ok := node.(*ast.CaseClause); ok {
+				// case x:
+				//     err = f()
+				// case y:
+				v.level[len(v.level)-1] = 2 // 0: *ast.CaseClause, 1: *ast.BlockStmt 2: *ast.SwitchStmt
+			} else {
+				v.popPending()
+			}
 		}
 	}
+
+	//fmt.Println("---")
 
 	switch stmt := node.(type) {
 	case *ast.ExprStmt:
