@@ -18,6 +18,27 @@ func i(e error) error {
 	return e
 }
 
+func j() error {
+	e := f()
+	return e
+}
+
+func k() error {
+	var err13 error
+	err13 = f()
+	if err13 == nil {
+		err13 = f()
+		if err13 == nil {
+			err13 = f()
+		}
+	}
+	return i(err13)
+}
+
+func l() error {
+	return f()
+}
+
 func check(e error) {}
 
 func main() {
@@ -87,4 +108,6 @@ func main() {
 	if err12 != nil {
 		panic(err12)
 	}
+
+
 }

@@ -600,7 +600,7 @@ func (v *visitor) Visit(node ast.Node) ast.Visitor {
 	if len(v.pendingErrors) != 0 {
 		if v.level[len(v.level)-1] == 0 {
 			if node == nil {
-				// hack for *ast.CaseClause.Body, not sure this introduce more problem
+				// when node is nil it means returning to parent node, simple +1 to wait to get next real node
 				v.level[len(v.level)-1] = 1
 				//fmt.Println("hack!!")
 			} else if _, ok := node.(*ast.CaseClause); ok {
@@ -785,6 +785,21 @@ func (v *visitor) Visit(node ast.Node) ast.Visitor {
 			}
 			if ident, ok := stmt.Y.(*ast.Ident); ok {
 				delete(v.toCheckErrors, ident.Name)
+			}
+		}
+	case *ast.ReturnStmt:
+		for _, returnExpr := range stmt.Results {
+			switch expr := returnExpr.(type) {
+			case *ast.Ident:
+				// only handle `return err`
+				delete(v.toCheckErrors, expr.Name)
+			case *ast.CallExpr:
+				// only handle `return f(err)`
+				for _, arg := range expr.Args {
+					if ident, ok := arg.(*ast.Ident); ok {
+						delete(v.toCheckErrors, ident.Name)
+					}
+				}
 			}
 		}
 	default:
