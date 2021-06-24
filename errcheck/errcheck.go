@@ -218,14 +218,14 @@ func (c *Checker) CheckPackage(pkg *packages.Package) Result {
 	}
 
 	v := &visitor{
-		typesInfo: pkg.TypesInfo,
-		fset:      pkg.Fset,
-		ignore:    ignore,
-		blank:     !c.Exclusions.BlankAssignments,
-		asserts:   !c.Exclusions.TypeAssertions,
-		lines:     make(map[string][]string),
-		exclude:   excludedSymbols,
-		errors:    []UncheckedError{},
+		typesInfo:     pkg.TypesInfo,
+		fset:          pkg.Fset,
+		ignore:        ignore,
+		blank:         !c.Exclusions.BlankAssignments,
+		asserts:       !c.Exclusions.TypeAssertions,
+		lines:         make(map[string][]string),
+		exclude:       excludedSymbols,
+		errors:        []UncheckedError{},
 		pendingErrors: []map[string]UncheckedError{},
 		toCheckErrors: map[string]UncheckedError{},
 	}
@@ -249,8 +249,8 @@ type visitor struct {
 	lines     map[string][]string
 	exclude   map[string]bool
 
-	errors []UncheckedError
-	level []int
+	errors        []UncheckedError
+	level         []int
 	pendingErrors []map[string]UncheckedError
 	toCheckErrors map[string]UncheckedError
 }
@@ -545,7 +545,7 @@ func (v *visitor) addErrorAtPosition(position token.Pos, call *ast.CallExpr) {
 
 func (v *visitor) addPendingErrorsAtPosition(positions []token.Pos, calls []*ast.CallExpr, identNames []string) {
 	m := map[string]UncheckedError{}
-	for i := range positions{
+	for i := range positions {
 		position, call, identName := positions[i], calls[i], identNames[i]
 		pos := v.fset.Position(position)
 		lines, ok := v.lines[pos.Filename]
@@ -754,6 +754,16 @@ func (v *visitor) Visit(node ast.Node) ast.Visitor {
 				if ident, ok := arg.(*ast.Ident); ok {
 					delete(v.toCheckErrors, ident.Name)
 				}
+			}
+		}
+	case *ast.BinaryExpr:
+		// handle `if err := f(); err != nil`
+		if stmt.Op == token.EQL || stmt.Op == token.NEQ {
+			if ident, ok := stmt.X.(*ast.Ident); ok {
+				delete(v.toCheckErrors, ident.Name)
+			}
+			if ident, ok := stmt.Y.(*ast.Ident); ok {
+				delete(v.toCheckErrors, ident.Name)
 			}
 		}
 	default:
