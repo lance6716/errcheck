@@ -601,7 +601,7 @@ func (v *visitor) Visit(node ast.Node) ast.Visitor {
 			if node == nil {
 				// hack for *ast.CaseClause.Body, not sure this introduce more problem
 				v.level[len(v.level)-1] = 1
-				fmt.Println("hack!!")
+				//fmt.Println("hack!!")
 			} else if _, ok := node.(*ast.CaseClause); ok {
 				// case x:
 				//     err = f()
