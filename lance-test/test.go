@@ -39,6 +39,31 @@ func l() error {
 	return f()
 }
 
+func m() (int, error) {
+	var err14 error
+	a := 1
+	switch a {
+	case 1:
+		err14 = f()
+	default:
+		err14 = f()
+	}
+	return a, err14
+}
+
+func n() (err error) {
+	err = f() // TODO: should ignore
+	return
+}
+
+func o(error) bool {
+	return false
+}
+
+func p(int) bool {
+	return false
+}
+
 func check(e error) {}
 
 func main() {
@@ -109,5 +134,51 @@ func main() {
 		panic(err12)
 	}
 
+	err15 := f()
+	switch err15 {
+	case nil:
+	}
 
+	err16 := f()
+	switch i(err16) {
+	case nil:
+	}
+
+	if err17 := f(); err17 != nil && o(err17) {
+		panic(err17)
+	}
+
+	var(
+		b bool
+		err18 error
+	)
+	if b {
+		err18 = f() // TODO: should ignore
+	} else {
+		err18 = f()
+	}
+	check(err18)
+
+	var err19 error
+	switch iii {
+	case 1:
+		err19 = f() // TODO: SHOULD REPORT
+	default:
+		err19 = f() // SHOULD REPORT
+	}
+	_ = iii
+	if err19 != nil {
+		panic(err19)
+	}
+
+	var err20 error
+	switch iii {
+	case 1:
+		err20 = f()
+	default:
+		_ = p(iii)
+	}
+	check(err20)
+
+	err16 = f() // TODO: SHOULD REPORT
 }

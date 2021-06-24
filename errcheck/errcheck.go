@@ -622,14 +622,8 @@ func (v *visitor) Visit(node ast.Node) ast.Visitor {
 			if !v.ignoreCall(call) && v.callReturnsError(call) {
 				v.addErrorAtPosition(call.Lparen, call)
 			}
-			if len(v.toCheckErrors) == 0 {
-				break
-			}
-			// only handle `Check(err)`
 			for _, arg := range call.Args {
-				if ident, ok := arg.(*ast.Ident); ok {
-					delete(v.toCheckErrors, ident.Name)
-				}
+				v.markReadIdent(arg)
 			}
 		}
 	case *ast.GoStmt:
@@ -739,70 +733,17 @@ func (v *visitor) Visit(node ast.Node) ast.Visitor {
 			}
 		}
 	case *ast.IfStmt:
-		if len(v.toCheckErrors) == 0 {
-			break
-		}
-		switch expr := stmt.Cond.(type) {
-		case *ast.BinaryExpr:
-			// only handle `if err == x` or `if err != x`
-			if expr.Op == token.EQL || expr.Op == token.NEQ {
-				if ident, ok := expr.X.(*ast.Ident); ok {
-					delete(v.toCheckErrors, ident.Name)
-				}
-				if ident, ok := expr.Y.(*ast.Ident); ok {
-					delete(v.toCheckErrors, ident.Name)
-				}
-			}
-		case *ast.CallExpr:
-			// only handle `if errors.Is(err)`
-			for _, arg := range expr.Args {
-				if ident, ok := arg.(*ast.Ident); ok {
-					delete(v.toCheckErrors, ident.Name)
-				}
-			}
-		}
+		v.markReadIdent(stmt.Cond)
 	case *ast.SendStmt:
-		if len(v.toCheckErrors) == 0 {
-			break
-		}
-		switch expr := stmt.Value.(type) {
-		case *ast.Ident:
-			// only handle `ch <- err`
-			delete(v.toCheckErrors, expr.Name)
-		case *ast.CallExpr:
-			// only handle `ch <- NewError(err)`
-			for _, arg := range expr.Args {
-				if ident, ok := arg.(*ast.Ident); ok {
-					delete(v.toCheckErrors, ident.Name)
-				}
-			}
-		}
+		v.markReadIdent(stmt.Value)
 	case *ast.BinaryExpr:
-		// handle `if err := f(); err != nil`
-		if stmt.Op == token.EQL || stmt.Op == token.NEQ {
-			if ident, ok := stmt.X.(*ast.Ident); ok {
-				delete(v.toCheckErrors, ident.Name)
-			}
-			if ident, ok := stmt.Y.(*ast.Ident); ok {
-				delete(v.toCheckErrors, ident.Name)
-			}
-		}
+		v.markReadIdent(stmt)
 	case *ast.ReturnStmt:
 		for _, returnExpr := range stmt.Results {
-			switch expr := returnExpr.(type) {
-			case *ast.Ident:
-				// only handle `return err`
-				delete(v.toCheckErrors, expr.Name)
-			case *ast.CallExpr:
-				// only handle `return f(err)`
-				for _, arg := range expr.Args {
-					if ident, ok := arg.(*ast.Ident); ok {
-						delete(v.toCheckErrors, ident.Name)
-					}
-				}
-			}
+			v.markReadIdent(returnExpr)
 		}
-	default:
+	case *ast.SwitchStmt:
+		v.markReadIdent(stmt.Tag)
 	}
 
 	for _, err := range v.toCheckErrors {
@@ -820,6 +761,25 @@ func (v *visitor) Visit(node ast.Node) ast.Visitor {
 
 	return v
 	// add toCheckErrors for last time
+}
+
+func (v *visitor) markReadIdent(e ast.Expr) {
+	if len(v.toCheckErrors) == 0 {
+		return
+	}
+	switch expr := e.(type) {
+	case *ast.Ident:
+		delete(v.toCheckErrors, expr.Name)
+	case *ast.CallExpr:
+		for _, arg := range expr.Args {
+			if ident, ok := arg.(*ast.Ident); ok {
+				delete(v.toCheckErrors, ident.Name)
+			}
+		}
+	case *ast.BinaryExpr:
+		v.markReadIdent(expr.X)
+		v.markReadIdent(expr.Y)
+	}
 }
 
 func isErrorType(t types.Type) bool {
